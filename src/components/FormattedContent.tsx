@@ -12,13 +12,13 @@ interface FormattedContentProps {
 
 export const FormattedContent = React.memo(function FormattedContent({ content, className = "" }: FormattedContentProps) {
   const components = React.useMemo(() => ({
-          p: ({ children }) => <p className="mb-4 leading-relaxed text-zinc-300 last:mb-0">{children}</p>,
-          strong: ({ children }) => <strong className="font-semibold text-zinc-100">{children}</strong>,
-          em: ({ children }) => <em className="italic text-zinc-200">{children}</em>,
-          ul: ({ children }) => <ul className="list-disc list-inside space-y-1 mb-4 text-zinc-300">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal list-inside space-y-1 mb-4 text-zinc-300">{children}</ol>,
-          li: ({ children }) => <li className="text-zinc-300">{children}</li>,
-          blockquote: ({ children }) => (
+          p: ({ children }: any) => <p className="mb-4 leading-relaxed text-zinc-300 last:mb-0">{children}</p>,
+          strong: ({ children }: any) => <strong className="font-semibold text-zinc-100">{children}</strong>,
+          em: ({ children }: any) => <em className="italic text-zinc-200">{children}</em>,
+          ul: ({ children }: any) => <ul className="list-disc list-inside space-y-1 mb-4 text-zinc-300">{children}</ul>,
+          ol: ({ children }: any) => <ol className="list-decimal list-inside space-y-1 mb-4 text-zinc-300">{children}</ol>,
+          li: ({ children }: any) => <li className="text-zinc-300">{children}</li>,
+          blockquote: ({ children }: any) => (
             <blockquote className="border-l-4 border-blue-500/50 pl-4 py-1 my-3 bg-zinc-950/40 rounded-r text-zinc-400 italic">
               {children}
             </blockquote>
