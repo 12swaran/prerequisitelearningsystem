@@ -10,12 +10,8 @@ interface FormattedContentProps {
   className?: string;
 }
 
-export function FormattedContent({ content, className = "" }: FormattedContentProps) {
-  return (
-    <div className={`prose prose-invert max-w-none text-zinc-300 leading-relaxed ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
+export const FormattedContent = React.memo(function FormattedContent({ content, className = "" }: FormattedContentProps) {
+  const components = React.useMemo(() => ({
           p: ({ children }) => <p className="mb-4 leading-relaxed text-zinc-300 last:mb-0">{children}</p>,
           strong: ({ children }) => <strong className="font-semibold text-zinc-100">{children}</strong>,
           em: ({ children }) => <em className="italic text-zinc-200">{children}</em>,
@@ -47,13 +43,19 @@ export function FormattedContent({ content, className = "" }: FormattedContentPr
 
             return <CodeBlock language={language} code={codeText} />;
           },
-        }}
+        }), []);
+
+  return (
+    <div className={`prose prose-invert max-w-none text-zinc-300 leading-relaxed ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={components as any}
       >
         {content}
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);

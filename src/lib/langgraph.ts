@@ -29,14 +29,11 @@ export type PathfinderState = typeof StateAnnotation.State;
 // Candidate models for seamless fallback on rate limits
 const FALLBACK_MODELS = [
   "gemini-3.5-flash",
-  "gemini-3.6-flash",
-  "gemini-flash-latest",
-  "gemini-3.1-flash-lite-preview",
-  "gemini-2.5-flash-lite"
+  "gemini-flash-latest"
 ];
 
 // Helper to initialize Google GenAI SDK
-function getAIClient(customKey?: string) {
+export function getAIClient(customKey?: string) {
   const key = customKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) {
     throw new Error("Missing Gemini API Key. Please provide your GEMINI_API_KEY in .env.local or enter it in the app.");
@@ -45,7 +42,7 @@ function getAIClient(customKey?: string) {
 }
 
 // Generate with automatic model fallback for 429 quota errors
-async function generateWithFallback(
+export async function generateWithFallback(
   ai: GoogleGenAI, 
   contents: string, 
   schema: any
@@ -75,7 +72,7 @@ async function generateWithFallback(
 }
 
 // Robust JSON parser helper
-function safeParseJson<T>(rawText: string | undefined): T {
+export function safeParseJson<T>(rawText: string | undefined): T {
   if (!rawText) {
     throw new Error("Empty response received from AI model.");
   }
@@ -137,6 +134,18 @@ async function presentConceptNode(state: PathfinderState): Promise<Partial<Pathf
   }
 
   const currentConcept = state.prerequisites[state.current_index];
+
+  // Shortcut: if pre-fetched content is already in the state, just use it
+  if (state.current_explanation && state.current_example && state.current_quiz) {
+    return {
+      current_explanation: state.current_explanation,
+      current_example: state.current_example,
+      current_quiz: state.current_quiz,
+      quiz_answers: [],
+      quiz_score: null,
+      error: null,
+    };
+  }
 
   try {
     const ai = getAIClient(state.api_key);

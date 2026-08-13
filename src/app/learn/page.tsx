@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +33,50 @@ export default function LearnPage() {
   const [error, setError] = useState<string | null>(null);
   const [customApiKey, setCustomApiKey] = useState<string>("");
   const [showApiKeyInput, setShowApiKeyInput] = useState<boolean>(false);
+  const prefetchCache = useRef<Map<string, any>>(new Map());
+
+  const prefetchNextConcept = async (currentState: any) => {
+    if (!currentState.prerequisites || currentState.is_completed) return;
+    
+    // We want to prefetch the *next* concept. 
+    // If the state just updated and current_index is N, we want to prefetch N+1.
+    const nextIdx = (currentState.current_index || 0) + 1;
+    if (nextIdx >= currentState.prerequisites.length) return;
+    
+    const nextConcept = currentState.prerequisites[nextIdx];
+    
+    // Don't prefetch if already in cache
+    if (prefetchCache.current.has(nextConcept)) return;
+    
+    try {
+      const activeApiKey = customApiKey || localStorage.getItem("pathfinder_api_key") || "";
+      const masteredList = Object.keys(currentState.mastery || {})
+        .filter((k) => currentState.mastery[k] === "verified" || currentState.mastery[k] === "skipped")
+        .join(", ") || "None";
+        
+      const res = await fetch("/api/orchestrator/prefetch", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          ...(activeApiKey ? { "x-gemini-key": activeApiKey } : {})
+        },
+        body: JSON.stringify({ 
+          target_concept: currentState.target_concept,
+          concept_name: nextConcept,
+          mastered_list: masteredList
+        }),
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.explanation) {
+          prefetchCache.current.set(nextConcept, data);
+        }
+      }
+    } catch (e) {
+      console.warn("Prefetch failed quietly:", e);
+    }
+  };
 
   useEffect(() => {
     // Load custom API key if saved in localStorage
@@ -103,6 +147,32 @@ export default function LearnPage() {
       const cleanState = { ...currentState };
       delete cleanState.error;
 
+      // Look ahead: if this action leads to a new concept, check cache
+      let targetConceptName = undefined;
+      if (action === "next_concept" || action === "skip") {
+        const nextIdx = (cleanState.current_index || 0) + 1;
+        if (cleanState.prerequisites && nextIdx < cleanState.prerequisites.length) {
+          targetConceptName = cleanState.prerequisites[nextIdx];
+        }
+      } else if (action === "init" && cleanState.prerequisites && cleanState.prerequisites.length > 0) {
+        targetConceptName = cleanState.prerequisites[0];
+      } else if (action === "presentConcept" && cleanState.prerequisites) {
+        targetConceptName = cleanState.prerequisites[cleanState.current_index || 0];
+      }
+
+      // If we have cached content for the concept we are about to present, inject it
+      if (targetConceptName && prefetchCache.current.has(targetConceptName)) {
+        const cached = prefetchCache.current.get(targetConceptName);
+        cleanState.current_explanation = cached.explanation;
+        cleanState.current_example = cached.example;
+        cleanState.current_quiz = cached.quiz;
+      } else if (action === "next_concept" || action === "skip" || action === "submit_quiz") {
+        // Strip heavy content from payload to speed up requests if we are just transitioning or grading
+        delete cleanState.current_explanation;
+        delete cleanState.current_example;
+        delete cleanState.current_quiz;
+      }
+
       const res = await fetch("/api/orchestrator", {
         method: "POST",
         headers: { 
@@ -123,6 +193,11 @@ export default function LearnPage() {
 
       setState(data.state);
       setSelectedAnswers([]); // Reset answers
+
+      // Fire off prefetch for the *next* concept after state updates
+      if (data.state && !data.state.error && data.state.prerequisites) {
+        prefetchNextConcept(data.state);
+      }
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred.");
     } finally {
