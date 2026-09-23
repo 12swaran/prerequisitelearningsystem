@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { PathfinderState } from "@/lib/langgraph";
+import { readApiResponse } from "@/lib/api-response";
 import { FormattedContent } from "@/components/FormattedContent";
 
 export default function LearnPage() {
@@ -34,6 +35,7 @@ export default function LearnPage() {
   const [customApiKey, setCustomApiKey] = useState<string>("");
   const [showApiKeyInput, setShowApiKeyInput] = useState<boolean>(false);
   const prefetchCache = useRef<Map<string, any>>(new Map());
+  const lastRequest = useRef<{ state: Partial<PathfinderState>; action: string } | null>(null);
 
   const prefetchNextConcept = async (currentState: any) => {
     if (!currentState.prerequisites || currentState.is_completed) return;
@@ -91,7 +93,7 @@ export default function LearnPage() {
       try {
         const parsed = JSON.parse(savedState);
         // Only load if valid and free of errors
-        if (!parsed.error && parsed.prerequisites && parsed.prerequisites.length > 0) {
+        if (!parsed.error && parsed.prerequisites?.length > 0 && (parsed.is_completed || parsed.current_quiz)) {
           setState(parsed);
           setLoading(false);
           return;
@@ -115,10 +117,10 @@ export default function LearnPage() {
 
   // Persist state when it changes and is valid
   useEffect(() => {
-    if (state && !loading && !state.error && state.prerequisites && state.prerequisites.length > 0) {
+    if (state && !loading && !error && !state.error && state.prerequisites?.length && (state.is_completed || state.current_quiz)) {
       localStorage.setItem("pathfinder_state", JSON.stringify(state));
     }
-  }, [state, loading]);
+  }, [state, loading, error]);
 
   // Trigger confetti when completed
   useEffect(() => {
@@ -143,9 +145,10 @@ export default function LearnPage() {
     setLoading(true);
     setError(null);
     try {
-      const activeApiKey = apiKeyOverride !== undefined ? apiKeyOverride : customApiKey;
+      const activeApiKey = apiKeyOverride !== undefined ? apiKeyOverride : customApiKey || localStorage.getItem("pathfinder_api_key") || "";
       const cleanState = { ...currentState };
       delete cleanState.error;
+      delete cleanState.api_key;
 
       // Look ahead: if this action leads to a new concept, check cache
       let targetConceptName = undefined;
@@ -173,30 +176,38 @@ export default function LearnPage() {
         delete cleanState.current_quiz;
       }
 
-      const res = await fetch("/api/orchestrator", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          ...(activeApiKey ? { "x-gemini-key": activeApiKey } : {})
-        },
-        body: JSON.stringify({ state: cleanState, action }),
-      });
-      const data = await res.json();
-      
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to contact orchestrator");
-      }
-      
-      if (data.state?.error) {
-        throw new Error(data.state.error);
+      let requestState = cleanState;
+      let requestAction = action;
+      let nextState: PathfinderState;
+      while (true) {
+        lastRequest.current = { state: requestState, action: requestAction };
+        const res = await fetch("/api/orchestrator", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(activeApiKey ? { "x-gemini-key": activeApiKey } : {})
+          },
+          body: JSON.stringify({ state: requestState, action: requestAction }),
+        });
+        nextState = await readApiResponse(res);
+
+        // Generate the chain and its first lesson in separate requests.
+        if (requestAction === "init") {
+          setState(nextState);
+          requestState = nextState;
+          requestAction = "present_concept";
+          continue;
+        }
+        break;
       }
 
-      setState(data.state);
+      lastRequest.current = null;
+      setState(nextState);
       setSelectedAnswers([]); // Reset answers
 
       // Fire off prefetch for the *next* concept after state updates
-      if (data.state && !data.state.error && data.state.prerequisites) {
-        prefetchNextConcept(data.state);
+      if (nextState.prerequisites) {
+        prefetchNextConcept(nextState);
       }
     } catch (err: any) {
       setError(err.message || "An unexpected error occurred.");
@@ -207,12 +218,8 @@ export default function LearnPage() {
 
   const handleRetryCurrent = () => {
     setError(null);
-    const target = state?.target_concept || localStorage.getItem("pathfinder_target") || "Machine Learning";
-    if (state?.prerequisites && state.prerequisites.length > 0 && state.current_index !== undefined) {
-      callOrchestrator(state, "presentConcept" as any);
-    } else {
-      callOrchestrator({ target_concept: target }, "init");
-    }
+    const failed = lastRequest.current;
+    if (failed) callOrchestrator(failed.state, failed.action);
   };
 
   const handleSaveApiKey = (e: React.FormEvent) => {
@@ -221,13 +228,9 @@ export default function LearnPage() {
     localStorage.setItem("pathfinder_api_key", customApiKey.trim());
     setShowApiKeyInput(false);
     
-    // Retry current action
-    const target = state?.target_concept || localStorage.getItem("pathfinder_target") || "Machine Learning";
-    if (state?.prerequisites && state.prerequisites.length > 0) {
-      callOrchestrator(state, "skip", customApiKey.trim());
-    } else {
-      callOrchestrator({ target_concept: target }, "init", customApiKey.trim());
-    }
+    // Retry the failed step without advancing past the current concept.
+    const failed = lastRequest.current;
+    if (failed) callOrchestrator(failed.state, failed.action, customApiKey.trim());
   };
 
   const handleSubmitQuiz = () => {

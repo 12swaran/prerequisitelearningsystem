@@ -33,8 +33,10 @@ export async function POST(req: NextRequest) {
     // Invoke the LangGraph workflow
     const newState = await appGraph.invoke(initialState);
 
-    // Return the new state
-    return NextResponse.json({ state: newState });
+    // The client keeps its own key; never send the server's key back in state.
+    const publicState = { ...newState };
+    delete publicState.api_key;
+    return NextResponse.json({ state: publicState });
   } catch (error: any) {
     console.error("Orchestrator error:", error);
     return NextResponse.json({ error: error.message || "Failed to process state machine step." }, { status: 500 });

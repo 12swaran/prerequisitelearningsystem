@@ -20,7 +20,7 @@ export const StateAnnotation = Annotation.Root({
   quiz_score: Annotation<number | null>,
   error: Annotation<string | null>,
   is_completed: Annotation<boolean>,
-  action: Annotation<"init" | "submit_quiz" | "skip" | "next_concept" | "none">,
+  action: Annotation<"init" | "present_concept" | "submit_quiz" | "skip" | "next_concept" | "none">,
   api_key: Annotation<string | undefined>,
 });
 
@@ -290,6 +290,7 @@ async function completedNode(state: PathfinderState): Promise<Partial<Pathfinder
 // Routing Logic
 function routeFromStart(state: PathfinderState) {
   if (state.action === "init") return "generateChain";
+  if (state.action === "present_concept") return "presentConcept";
   if (state.action === "submit_quiz") return "assessAnswer";
   if (state.action === "skip") return "skipConcept";
   if (state.action === "next_concept") return "nextConcept";
@@ -315,8 +316,8 @@ const finalWorkflow = new StateGraph(StateAnnotation)
   
   .addConditionalEdges(START, routeFromStart)
   
-  // After generating the chain, proceed to present concept 0
-  .addEdge("generateChain", "presentConcept")
+  // Keep each AI generation in its own request to avoid host timeouts.
+  .addEdge("generateChain", END)
   .addEdge("presentConcept", END)
   
   // After evaluating a quiz, end turn to show results screen to user

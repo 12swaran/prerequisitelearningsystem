@@ -61,6 +61,10 @@ async function postOrchestrator(body, headers = {}) {
     body: JSON.stringify(body),
   });
   const data = await res.json();
+  // The UI makes a second request after init so each AI generation has its own timeout.
+  if (body.action === "init" && res.ok && data.state && !data.state.error) {
+    return postOrchestrator({ state: data.state, action: "present_concept" }, headers);
+  }
   return { res, data };
 }
 
