@@ -26,10 +26,10 @@ export const StateAnnotation = Annotation.Root({
 
 export type PathfinderState = typeof StateAnnotation.State;
 
-// Candidate models for seamless fallback on rate limits
+// Use distinct models so a busy Flash model can fall back to Flash-Lite.
 const FALLBACK_MODELS = [
   "gemini-3.5-flash",
-  "gemini-flash-latest"
+  "gemini-3.5-flash-lite"
 ];
 
 // Helper to initialize Google GenAI SDK
@@ -41,33 +41,55 @@ export function getAIClient(customKey?: string) {
   return new GoogleGenAI({ apiKey: key });
 }
 
-// Generate with automatic model fallback for 429 quota errors
+function apiStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null || !("status" in error)) return undefined;
+  const status = error.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+// Try the other model first, then make one delayed pass for transient failures.
 export async function generateWithFallback(
   ai: GoogleGenAI, 
   contents: string, 
   schema: any
 ): Promise<string> {
-  let lastError: any = null;
+  let lastError: unknown;
+  let sawTransientError = false;
 
-  for (const model of FALLBACK_MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model: model,
-        contents: contents,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: schema
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) {
+      if (!sawTransientError) break;
+      await new Promise((resolve) => setTimeout(resolve, 1000 + Math.random() * 500));
+    }
+    sawTransientError = false;
+
+    for (const model of FALLBACK_MODELS) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: schema
+          }
+        });
+        if (response.text) return response.text;
+        lastError = new Error(`Gemini returned an empty response from ${model}.`);
+      } catch (error: unknown) {
+        lastError = error;
+        const status = apiStatus(error);
+        if (status === 401 || status === 403) throw error;
+        if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
+          sawTransientError = true;
         }
-      });
-      if (response.text) {
-        return response.text;
+        console.warn(`Model ${model} failed with HTTP ${status ?? "unknown"}; trying fallback.`);
       }
-    } catch (err: any) {
-      lastError = err;
-      console.warn(`Model ${model} failed: ${err.message?.slice(0, 100)} — trying fallback...`);
     }
   }
 
+  if (apiStatus(lastError) === 503) {
+    throw new Error("Gemini is temporarily busy. Please try again in a few minutes.");
+  }
   throw lastError || new Error("Failed to generate content with all available AI models.");
 }
 
